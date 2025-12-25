@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Node / frontend (ignore completely for now)
+frontend/
+node_modules/
+package.json
+package-lock.json
+
+# OS
+.DS_Store
+
+# FAISS / runtime data
+app/repos/
+app/*.index
