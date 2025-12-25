@@ -13,8 +13,7 @@ tqdm==4.66.4
 
 google-generativeai==0.7.2
 
-tree_sitter==0.21.1
-tree_sitter_languages
+
 
 
 #database dependencies

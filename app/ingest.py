@@ -1,8 +1,7 @@
-# app/injest.py
+# app/ingest.py
 
 import ast
 import os
-from tree_sitter_languages import get_parser
 
 
 # ================================================================
@@ -33,10 +32,6 @@ def get_constants(node):
 
 
 def parse_python_file(file_path):
-    """
-    Parse a Python file into semantic chunks using AST.
-    Returns a list of chunk dictionaries.
-    """
     try:
         source = open(file_path, "r", encoding="utf-8").read()
     except:
@@ -45,14 +40,12 @@ def parse_python_file(file_path):
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        print(f"[AST] Skipping invalid Python file: {file_path}")
         return []
 
     chunks = []
 
     for node in ast.walk(tree):
 
-        # FUNCTIONS
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             code = ast.get_source_segment(source, node) or ""
             snippet = code[:250].replace("\n", " ")
@@ -81,7 +74,6 @@ Snippet: {snippet}
 """.strip()
             })
 
-        # CLASSES
         elif isinstance(node, ast.ClassDef):
             code = ast.get_source_segment(source, node) or ""
             snippet = code[:250].replace("\n", " ")
@@ -100,76 +92,48 @@ Snippet: {snippet}
 
 
 # ================================================================
-# === PART 2 — TREE-SITTER PARSING FOR OTHER LANGUAGES ===========
+# === PART 2 — GENERIC CODE FALLBACK (NO TREE-SITTER) ============
 # ================================================================
 
-SUPPORTED_LANGUAGES = {
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".cc": "cpp",
-    ".html": "html",
-    ".css": "css",
-    ".php": "php",
-    ".rb": "ruby",
+SUPPORTED_CODE_EXTENSIONS = {
+    ".js", ".jsx", ".ts", ".tsx",
+    ".java", ".c", ".h", ".cpp", ".cc",
+    ".go", ".rs", ".php", ".rb", ".css", ".html"
 }
 
 
-def parse_with_treesitter(file_path):
-    ext = os.path.splitext(file_path)[1].lower()
-    lang_name = SUPPORTED_LANGUAGES.get(ext)
-
-    if not lang_name:
-        return []
-
+def parse_generic_code_file(file_path):
+    """
+    Simple, robust fallback chunker:
+    - splits file into ~40 line blocks
+    - works for ALL languages
+    """
     try:
-        parser = get_parser(lang_name)
-    except:
-        print(f"[TS] Unsupported language for file: {file_path}")
-        return []
-
-    try:
-        source_bytes = open(file_path, "rb").read()
+        lines = open(file_path, "r", encoding="utf-8", errors="ignore").readlines()
     except:
         return []
-
-    try:
-        tree = parser.parse(source_bytes)
-    except:
-        print(f"[TS] Failed to parse file: {file_path}")
-        return []
-
-    root = tree.root_node
-    text = source_bytes.decode("utf-8", errors="ignore")
 
     chunks = []
+    chunk_size = 40
 
-    for child in root.children:
-        if child.type in [
-            "function_declaration",
-            "method_definition",
-            "class_declaration",
-            "function_definition"
-        ]:
-            code = text[child.start_byte:child.end_byte]
-            snippet = code[:250].replace("\n", " ")
+    for i in range(0, len(lines), chunk_size):
+        block = lines[i:i + chunk_size]
+        code = "".join(block)
+        snippet = code[:250].replace("\n", " ")
 
-            chunks.append({
-                "kind": child.type,
-                "name": f"{child.type}_{child.start_point[0]}",
-                "file": os.path.basename(file_path),
-                "lineno_start": child.start_point[0],
-                "lineno_end": child.end_point[0],
-                "code": code,
-                "text_to_embed": f"{child.type}: {snippet}"
-            })
+        chunks.append({
+            "kind": "code_block",
+            "name": f"block_{i // chunk_size}",
+            "file": os.path.basename(file_path),
+            "lineno_start": i + 1,
+            "lineno_end": i + len(block),
+            "code": code,
+            "text_to_embed": f"""
+Code block from {os.path.basename(file_path)}
+Lines {i + 1} to {i + len(block)}
+Snippet: {snippet}
+""".strip()
+        })
 
     return chunks
 
@@ -189,14 +153,6 @@ SKIP_FOLDERS = {
 
 
 def run_ingest(cloned_repo_path):
-    """
-    Parse a fully cloned repo directory → return CHUNKS as a list.
-
-    This version:
-    - DOES NOT create chunks.json
-    - DOES NOT write anything to disk
-    - Returns Python objects directly
-    """
     chunks = []
 
     for root, dirs, files in os.walk(cloned_repo_path):
@@ -209,35 +165,32 @@ def run_ingest(cloned_repo_path):
             if ext in SKIP_EXTENSIONS:
                 continue
 
-            # =======================
-            # ✅ NEW: FILE-LEVEL CHUNK
-            # =======================
+            # ---------- File-level chunk ----------
             try:
                 content = open(fpath, "r", encoding="utf-8", errors="ignore").read()
                 snippet = content[:400].replace("\n", " ")
 
                 chunks.append({
                     "kind": "file",
-                    "name": os.path.basename(fpath),
-                    "file": os.path.basename(fpath),
+                    "name": file,
+                    "file": file,
                     "lineno_start": 1,
                     "lineno_end": content.count("\n") + 1,
                     "code": content[:2000],
                     "text_to_embed": f"""
-File: {os.path.basename(fpath)}
-This file contains the following code.
+File: {file}
 Snippet: {snippet}
 """.strip()
                 })
             except:
                 pass
 
-            # Existing logic (UNCHANGED)
+            # ---------- Language-specific ----------
             if ext == ".py":
                 chunks.extend(parse_python_file(fpath))
 
-            elif ext in SUPPORTED_LANGUAGES:
-                chunks.extend(parse_with_treesitter(fpath))
+            elif ext in SUPPORTED_CODE_EXTENSIONS:
+                chunks.extend(parse_generic_code_file(fpath))
 
     print(f"[INGEST] Total chunks extracted: {len(chunks)}")
     return chunks
