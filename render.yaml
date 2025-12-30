@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: backend-codeRAG
+    name: backend_codeRAG
     env: python
     pythonVersion: 3.10.13
     plan: free
